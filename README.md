@@ -1,31 +1,160 @@
-# IT Asset Custody Tracking Automation
+# IT Asset Custody Form Automation
 
-A fully portable, zero-dependency PowerShell automation script designed to streamline the IT asset handover process. This tool automatically extracts detailed hardware specifications from the local machine and directly writes them into a formatted Excel (`.xlsx`) tracking document.
+Automated extraction of hardware specifications with direct Excel form population. Zero-dependency, fully portable, runs on any Windows computer without requiring Microsoft Excel or external modules.
 
-Designed for field deployments, this script manipulates the Excel file's underlying XML structure using native .NET classes, completely removing the need for Microsoft Excel, COM objects, or external PowerShell modules like `ImportExcel`.
+## Quick Start
 
-## 🚀 Key Features
+Run this single command in PowerShell on any computer:
 
-* **Zero Dependencies:** Uses built-in `System.IO.Compression` classes available in standard Windows PowerShell 5.1+. No module installation or internet access required.
-* **No MS Office Required:** Directly edits the `.xlsx` file structure, making it perfect for freshly formatted machines or offline environments.
-* **Automated Hardware Auditing:** Leverages WMI/CIM to accurately extract:
-  * Device Category (Desktop vs. Laptop)
-  * Brand, Model, and exact System SKU
-  * Device Serial Number / Service Tag
-  * CPU Model and Generation
-  * Total usable RAM (rounded to standard marketing sizes)
-  * Primary OS Drive Storage (ignoring USBs, mapped to standard capacities)
-  * Display Diagonal Size (converted to inches)
-  * GPU / Video Controller details
-* **Smart Excel Formatting:** Dynamically adjusts row heights for multi-line text, shrinks long text to fit specific cells, and injects print-safe page layouts (margins, centering, fit-to-page).
-* **Auto-Elevation:** Automatically detects permission issues and requests Admin elevation if restricted directory access is encountered.
+```powershell
+irm https://raw.githubusercontent.com/xnostra/Sherbornecustodytool/main/invoke-custody.ps1 | iex
+```
 
-## 📋 Folder Structure
+That's it—auto-downloads, auto-elevates to admin, auto-detects hardware, and generates a complete custody form.
 
-For the script to function correctly, it must be run alongside the target Excel template. The recommended layout for a portable USB drive is:
+## Features
 
-```text
+✅ **Automatic Hardware Detection**
+- Device type (laptop vs. desktop)
+- Brand, model, and SKU
+- CPU model and generation
+- RAM size (rounded to standard capacities)
+- Storage type and capacity
+- GPU/Video controller
+- Display diagonal size
+- Operating system and architecture
+
+✅ **Zero-Dependency Design**
+- No external PowerShell modules required
+- Uses built-in `System.IO.Compression` (available on all Windows PowerShell 5.1+)
+- No Microsoft Excel installation needed
+- Fully portable—copy to USB and run anywhere
+
+✅ **Direct Excel Manipulation**
+- Edits `.xlsx` file XML structure directly
+- Auto-generates formatted, print-ready documents
+- Automatically adjusts row heights for multi-line text
+- Shrink-to-fit for long asset tag numbers
+- Print-safe margins and page centering
+
+✅ **Professional Output**
+- Pre-configured print layouts
+- Compliance-ready tracking forms
+- Auditable asset records
+- Ready to print without manual formatting
+
+## Prerequisites
+
+- Windows 10/11 (any edition)
+- PowerShell 5.1+ (built-in)
+- Administrator privileges (auto-elevated if needed)
+- The custody form template (`custody form.xlsx`)
+
+## Usage
+
+The script prompts for details after detecting hardware:
+
+```
+Location (e.g., Qatar, BH, UK): Qatar
+Department: IT
+Staff/Custodian name [USERNAME]: John Smith
+Asset Tag Number: AST-001234
+```
+
+Output: `Filled/[Name] custody [Date].xlsx`
+
+## Deployment Options
+
+**Option 1: One-Liner** (Recommended)
+
+```powershell
+irm https://raw.githubusercontent.com/xnostra/Sherbornecustodytool/main/invoke-custody.ps1 | iex
+```
+
+**Option 2: Local Execution**
+
+```powershell
+.\Fill-CustodyForm.ps1
+```
+
+**Option 3: USB Portable**
+
+Copy to USB:
+```
 CustodyTool/
-├── Fill-CustodyForm.ps1       # The main execution script
-├── custody form.xlsx          # The blank template (MUST remain next to the script)
-└── Filled/                    # Auto-generated directory for completed forms
+├── Fill-CustodyForm.ps1
+├── custody form.xlsx
+└── Filled/
+```
+
+Then run from any Windows computer.
+
+## Command Parameters
+
+```powershell
+# Default
+.\Fill-CustodyForm.ps1
+
+# Custom template
+.\Fill-CustodyForm.ps1 -TemplatePath "C:\Templates\form.xlsx"
+
+# Custom output
+.\Fill-CustodyForm.ps1 -OutputFolder "C:\Output"
+
+# Both
+.\Fill-CustodyForm.ps1 -TemplatePath "C:\t.xlsx" -OutputFolder "C:\out"
+```
+
+## Auto-Detected Specifications
+
+Device type, brand, model, SKU, CPU with generation, OS, RAM (rounded to standard sizes), GPU, screen diagonal, storage capacity and type (OS drive only), and device serial number.
+
+## Troubleshooting
+
+**Access Denied**
+- Run PowerShell as Administrator
+- Or: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force`
+
+**Template Not Found**
+- Ensure `custody form.xlsx` is in script directory
+- Or specify full path with `-TemplatePath` parameter
+
+**Download Fails**
+- Verify GitHub URL is correct
+- Check internet connectivity
+
+## Print Configuration
+
+Auto-configured:
+- Portrait orientation
+- Fit to 1 page wide × 1 page high
+- 0.5" left/right margins
+- Horizontally centered
+- Dynamic row heights
+
+## Version History
+
+**v2.0** (2026-07-20)
+- Professional refactor with error handling
+- One-liner launcher support
+- Improved hardware detection
+- Enhanced print layouts
+
+**v1.0**
+- Initial release
+
+## Support
+
+For issues: Open a GitHub issue or check hardware detection with `Get-CimInstance` queries.
+
+## License
+
+Provided as-is. Modify and distribute freely.
+
+---
+
+**One-Liner**: `irm https://raw.githubusercontent.com/xnostra/Sherbornecustodytool/main/invoke-custody.ps1 | iex`
+
+**Repository**: https://github.com/xnostra/Sherbornecustodytool
+
+**Last Updated**: 2026-07-20
