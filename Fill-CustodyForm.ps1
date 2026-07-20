@@ -186,7 +186,7 @@ function Set-PrintLayout {
     $pageMargins = Get-OrAddElement 'pageMargins'
     $pageMargins.SetAttribute('left', '0.5'); $pageMargins.SetAttribute('right', '0.5'); $pageMargins.SetAttribute('top', '0.75'); $pageMargins.SetAttribute('bottom', '0.75'); $pageMargins.SetAttribute('header', '0.3'); $pageMargins.SetAttribute('footer', '0.3')
     $pageSetup = Get-OrAddElement 'pageSetup'
-    $pageSetup.SetAttribute('fitToWidth', '1'); $pageSetup.SetAttribute('fitToHeight', '1'); $pageSetup.SetAttribute('orientation', 'portrait')
+    $pageSetup.SetAttribute('fitToWidth', '1'); $pageSetup.SetAttribute('orientation', 'portrait')
 }
 
 function Get-NearestStandardSize {
