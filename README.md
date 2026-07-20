@@ -10,7 +10,7 @@ Run this single command in PowerShell on any computer:
 irm https://raw.githubusercontent.com/xnostra/Sherbornecustodytool/main/invoke-custody.ps1 | iex
 ```
 
-That's it—auto-downloads, auto-elevates to admin, auto-detects hardware, and generates a complete custody form.
+That's it—the one-liner auto-downloads the script and Excel template, auto-elevates to admin, auto-detects hardware, generates the completed form, **saves it to your Desktop**, and opens it automatically.
 
 ## Features
 
@@ -61,7 +61,9 @@ Staff/Custodian name [USERNAME]: John Smith
 Asset Tag Number: AST-001234
 ```
 
-Output: `Filled/[Name] custody [Date].xlsx`
+Output filename: `[Name] custody [Date].xlsx`
+- Via the one-liner: saved to your **Desktop** and opened automatically
+- Via local execution: saved to the `Filled/` folder next to the script
 
 ## Deployment Options
 
@@ -127,18 +129,22 @@ Device type, brand, model, SKU, CPU with generation, OS, RAM (rounded to standar
 
 Auto-configured:
 - Portrait orientation
-- Fit to 1 page wide × 1 page high
+- Fit to 1 page wide (fills the A4 width, no wasted whitespace)
 - 0.5" left/right margins
 - Horizontally centered
 - Dynamic row heights
 
 ## Version History
 
+**v2.1** (2026-07-20)
+- One-liner now auto-downloads the template and saves output to the Desktop
+- Output form auto-opens when complete
+- Print layout fits A4 width (removed excess whitespace)
+
 **v2.0** (2026-07-20)
 - Professional refactor with error handling
 - One-liner launcher support
 - Improved hardware detection
-- Enhanced print layouts
 
 **v1.0**
 - Initial release
