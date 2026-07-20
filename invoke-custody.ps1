@@ -38,10 +38,10 @@ try {
     $custodyScript | Out-File -FilePath $scriptPath -Encoding UTF8 -Force
     Write-Host "✓ Script downloaded" -ForegroundColor Green
 
-    # Download the template file
+    # Download the template file using WebClient (handles binary files better)
     Write-Host "Downloading Excel template..." -ForegroundColor Yellow
-    $templateBytes = Invoke-RestMethod -Uri $templateUrl -ErrorAction Stop
-    [System.IO.File]::WriteAllBytes($templatePath, $templateBytes)
+    $webClient = New-Object System.Net.WebClient
+    $webClient.DownloadFile($templateUrl, $templatePath)
     Write-Host "✓ Template downloaded" -ForegroundColor Green
 
     Write-Host ""
@@ -49,8 +49,9 @@ try {
     Write-Host ""
 
     # Execute the script from the working directory
-    Set-Location $workDir
+    Push-Location $workDir
     & $scriptPath
+    Pop-Location
 
     # Auto-open the generated file
     Start-Sleep -Seconds 1
