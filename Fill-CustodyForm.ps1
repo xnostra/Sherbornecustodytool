@@ -40,11 +40,22 @@
 
 [CmdletBinding()]
 param(
-    [string]$TemplatePath = (Join-Path $PSScriptRoot "custody form.xlsx"),
-    [string]$OutputFolder = (Join-Path $PSScriptRoot "Filled")
+    [string]$TemplatePath = "",
+    [string]$OutputFolder = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+# Handle PSScriptRoot being empty when run via Invoke-Expression
+$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+
+# Set defaults if not provided
+if (-not $TemplatePath) {
+    $TemplatePath = Join-Path $scriptRoot "custody form.xlsx"
+}
+if (-not $OutputFolder) {
+    $OutputFolder = Join-Path $scriptRoot "Filled"
+}
 $ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 $GiBtoGB = 1.073741824
 
