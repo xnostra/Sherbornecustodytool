@@ -178,34 +178,13 @@ function Set-PrintLayout {
     param($SheetXml, $NsMgr, $RootNode)
     $order = @('sheetPr','dimension','sheetViews','sheetFormatPr','cols','sheetData','sheetCalcPr','sheetProtection','protectedRanges','scenarios','autoFilter','sortState','dataConsolidate','customSheetViews','mergeCells','phoneticPr','conditionalFormatting','dataValidations','hyperlinks','printOptions','pageMargins','pageSetup','headerFooter','rowBreaks','colBreaks','customProperties','cellWatches','ignoredErrors','smartTags','drawing','drawingHF','picture','oleObjects','controls','webPublishItems','tableParts','extLst')
     function Get-OrAddElement { param([string]$TagName); $node = $RootNode.SelectSingleNode("s:$TagName", $NsMgr); if (-not $node) { $node = $SheetXml.CreateElement($TagName, $ns); $tagIndex = [array]::IndexOf($order, $TagName); $target = $null; foreach ($child in $RootNode.ChildNodes) { if ($child.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }; $childIndex = [array]::IndexOf($order, $child.LocalName); if ($childIndex -ge 0 -and $childIndex -gt $tagIndex) { $target = $child; break } }; if ($target) { $RootNode.InsertBefore($node, $target) | Out-Null } else { $RootNode.AppendChild($node) | Out-Null } }; return $node }
-
-    # Set wider column widths to fill page
-    $cols = Get-OrAddElement 'cols'
-    $cols.RemoveAll() | Out-Null
-    $colWidths = @(
-        @{min=1; max=1; width=3.5},
-        @{min=2; max=2; width=4},
-        @{min=3; max=3; width=5},
-        @{min=4; max=4; width=5},
-        @{min=5; max=5; width=5},
-        @{min=6; max=6; width=4.5}
-    )
-    foreach ($colSpec in $colWidths) {
-        $col = $SheetXml.CreateElement('col', $ns)
-        $col.SetAttribute('min', $colSpec.min)
-        $col.SetAttribute('max', $colSpec.max)
-        $col.SetAttribute('width', $colSpec.width)
-        $col.SetAttribute('customWidth', '1')
-        $cols.AppendChild($col) | Out-Null
-    }
-
     $sheetPr = Get-OrAddElement 'sheetPr'
     $pageSetUpPr = $sheetPr.SelectSingleNode('s:pageSetUpPr', $NsMgr)
     if (-not $pageSetUpPr) { $pageSetUpPr = $SheetXml.CreateElement('pageSetUpPr', $ns); $sheetPr.AppendChild($pageSetUpPr) | Out-Null }
     $pageSetUpPr.SetAttribute('fitToPage', '1')
     $printOptions = Get-OrAddElement 'printOptions'; $printOptions.SetAttribute('horizontalCentered', '1')
     $pageMargins = Get-OrAddElement 'pageMargins'
-    $pageMargins.SetAttribute('left', '0.25'); $pageMargins.SetAttribute('right', '0.25'); $pageMargins.SetAttribute('top', '0.4'); $pageMargins.SetAttribute('bottom', '0.4'); $pageMargins.SetAttribute('header', '0.2'); $pageMargins.SetAttribute('footer', '0.2')
+    $pageMargins.SetAttribute('left', '0.5'); $pageMargins.SetAttribute('right', '0.5'); $pageMargins.SetAttribute('top', '0.75'); $pageMargins.SetAttribute('bottom', '0.75'); $pageMargins.SetAttribute('header', '0.3'); $pageMargins.SetAttribute('footer', '0.3')
     $pageSetup = Get-OrAddElement 'pageSetup'
     $pageSetup.SetAttribute('fitToWidth', '1'); $pageSetup.SetAttribute('fitToHeight', '1'); $pageSetup.SetAttribute('orientation', 'portrait')
 }
@@ -366,23 +345,9 @@ $values = @{
 }
 
 $descLineCount = ($itemDescription -split "`n").Count
-$autoRowHeight = ($descLineCount + 1) * 25
+$autoRowHeight = ($descLineCount + 1) * 14
 
-# Set larger row heights to fill A4 page
-$rowHeights = @{
-    "1" = 35    # Header
-    "2" = 28    # Subheader
-    "3" = 32    # Company
-    "4" = 32    # Department
-    "5" = 32    # Staff name
-    "8" = 28    # Column headers
-    "9" = $autoRowHeight  # Description (auto-calculated)
-    "19" = 40   # Acknowledgment
-    "34" = 32   # Signature staff name
-    "36" = 32   # Signature date
-}
-
-Fill-Workbook -Path $newFormPath -Values $values -SheetName "ITAssetTrackForm" -WrapCells @("C9") -ShrinkCells @("E9") -RowHeights $rowHeights
+Fill-Workbook -Path $newFormPath -Values $values -SheetName "ITAssetTrackForm" -WrapCells @("C9") -ShrinkCells @("E9") -RowHeights @{ "9" = $autoRowHeight }
 
 Write-Status "`nForm completed!" -Level Success
 Write-Host "Saved: $newFormPath`n"
