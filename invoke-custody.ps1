@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
     One-liner launcher for IT Asset Custody Form Tool
-    Downloads and executes the custody form script from GitHub with a single command.
+    Downloads template and script, then executes the custody form tool.
 
 .DESCRIPTION
     This script can be run with:
     irm https://raw.githubusercontent.com/xnostra/Sherbornecustodytool/main/invoke-custody.ps1 | iex
 
 .NOTES
-    Version: 1.0
+    Version: 2.0
     Author: Sherborne Custody Tool Team
     LastModified: 2026-07-20
 
@@ -16,49 +16,71 @@
     https://github.com/xnostra/Sherbornecustodytool
 #>
 
-$gitHubRawUrl = "https://raw.githubusercontent.com/xnostra/Sherbornecustodytool/main/Fill-CustodyForm.ps1"
+$repoUrl = "https://raw.githubusercontent.com/xnostra/Sherbornecustodytool/main"
+$custodyScriptUrl = "$repoUrl/Fill-CustodyForm.ps1"
+$templateUrl = "$repoUrl/custody%20form.xlsx"
+
+# Create working directory
+$workDir = Join-Path $env:TEMP "CustodyTool_$(Get-Random)"
+New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+
+$scriptPath = Join-Path $workDir "Fill-CustodyForm.ps1"
+$templatePath = Join-Path $workDir "custody form.xlsx"
 
 Write-Host "IT Asset Custody Form Tool" -ForegroundColor Cyan
 Write-Host "======================================" -ForegroundColor Cyan
-Write-Host "Downloading script..." -ForegroundColor Yellow
+Write-Host ""
 
 try {
-    $custodyScript = Invoke-RestMethod -Uri $gitHubRawUrl -ErrorAction Stop
-    Write-Host "Script downloaded successfully." -ForegroundColor Green
+    # Download the main script
+    Write-Host "Downloading custody form script..." -ForegroundColor Yellow
+    $custodyScript = Invoke-RestMethod -Uri $custodyScriptUrl -ErrorAction Stop
+    $custodyScript | Out-File -FilePath $scriptPath -Encoding UTF8 -Force
+    Write-Host "✓ Script downloaded" -ForegroundColor Green
+
+    # Download the template file
+    Write-Host "Downloading Excel template..." -ForegroundColor Yellow
+    $templateBytes = Invoke-RestMethod -Uri $templateUrl -ErrorAction Stop
+    [System.IO.File]::WriteAllBytes($templatePath, $templateBytes)
+    Write-Host "✓ Template downloaded" -ForegroundColor Green
+
+    Write-Host ""
     Write-Host "Executing custody form tool..." -ForegroundColor Cyan
     Write-Host ""
 
-    # Capture output from the script
-    $output = Invoke-Expression $custodyScript
+    # Execute the script from the working directory
+    Set-Location $workDir
+    & $scriptPath
 
-    # Look for the file path in the output
-    $formPath = $null
-    if ($output) {
-        foreach ($line in $output) {
-            if ($line -match "FORMPATH:(.+)") {
-                $formPath = $matches[1]
-                break
-            }
+    # Auto-open the generated file
+    Start-Sleep -Seconds 1
+    $filledFolder = Join-Path $workDir "Filled"
+    if (Test-Path $filledFolder) {
+        $latestFile = Get-ChildItem -Path $filledFolder -Filter "*.xlsx" -ErrorAction SilentlyContinue | Sort-Object CreationTime -Descending | Select-Object -First 1
+        if ($latestFile) {
+            Write-Host ""
+            Write-Host "Opening generated form..." -ForegroundColor Green
+            Start-Process $latestFile.FullName
         }
     }
 
-    # Give it time to finish writing the file
-    Start-Sleep -Seconds 1
+    Write-Host ""
+    Write-Host "Cleanup in 60 seconds..." -ForegroundColor DarkGray
+    Start-Sleep -Seconds 60
 
-    # If we found the path, open it
-    if ($formPath -and (Test-Path $formPath)) {
-        Write-Host ""
-        Write-Host "Opening generated form..." -ForegroundColor Green
-        Start-Process $formPath
-        Write-Host "File opened successfully!" -ForegroundColor Green
-    } elseif ($formPath) {
-        Write-Host "File was created at: $formPath" -ForegroundColor Yellow
-    }
+    # Cleanup
+    Remove-Item -Path $workDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 catch {
-    Write-Host "ERROR: Failed to download or execute custody script" -ForegroundColor Red
-    Write-Host "URL: $gitHubRawUrl" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "ERROR: Failed to execute custody tool" -ForegroundColor Red
+    Write-Host "URL (Script): $custodyScriptUrl" -ForegroundColor Red
+    Write-Host "URL (Template): $templateUrl" -ForegroundColor Red
     Write-Host "Error: $_" -ForegroundColor Red
-    Start-Sleep -Seconds 3
+    Write-Host ""
+    Read-Host "Press Enter to close"
+
+    # Cleanup on error
+    Remove-Item -Path $workDir -Recurse -Force -ErrorAction SilentlyContinue
     exit 1
 }
