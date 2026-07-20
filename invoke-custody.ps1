@@ -28,28 +28,31 @@ try {
     Write-Host "Executing custody form tool..." -ForegroundColor Cyan
     Write-Host ""
 
-    # Get current directory before execution
-    $workingDir = Get-Location
-    $outputFolder = Join-Path $workingDir "Filled"
+    # Store current directory to find output files later
+    $startDir = Get-Location
+    $startTime = Get-Date
 
     # Execute the downloaded script
     Invoke-Expression $custodyScript
 
-    # Auto-open the most recently created file in the Filled folder
-    Start-Sleep -Seconds 1
-    if (Test-Path $outputFolder) {
-        $latestFile = Get-ChildItem -Path $outputFolder -Filter "*.xlsx" -ErrorAction SilentlyContinue | Sort-Object CreationTime -Descending | Select-Object -First 1
-        if ($latestFile) {
-            Write-Host ""
-            Write-Host "Opening generated form: $($latestFile.Name)" -ForegroundColor Green
-            Start-Process $latestFile.FullName
-            Write-Host "File opened in Excel." -ForegroundColor Green
-        }
+    # Give it time to finish writing the file
+    Start-Sleep -Seconds 2
+
+    # Look for the most recently created .xlsx file in current directory and subdirectories
+    $recentFiles = Get-ChildItem -Path $startDir -Filter "*.xlsx" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.CreationTime -gt $startTime } | Sort-Object CreationTime -Descending
+
+    if ($recentFiles) {
+        $fileToOpen = $recentFiles[0]
+        Write-Host ""
+        Write-Host "Opening generated form..." -ForegroundColor Green
+        Start-Process $fileToOpen.FullName
+        Write-Host "File opened: $($fileToOpen.Name)" -ForegroundColor Green
     }
 }
 catch {
     Write-Host "ERROR: Failed to download or execute custody script" -ForegroundColor Red
     Write-Host "URL: $gitHubRawUrl" -ForegroundColor Red
     Write-Host "Error: $_" -ForegroundColor Red
+    Start-Sleep -Seconds 3
     exit 1
 }
