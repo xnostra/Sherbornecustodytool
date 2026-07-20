@@ -17,7 +17,6 @@
 #>
 
 $gitHubRawUrl = "https://raw.githubusercontent.com/xnostra/Sherbornecustodytool/main/Fill-CustodyForm.ps1"
-$outputFolder = Join-Path $PSScriptRoot "Filled"
 
 Write-Host "IT Asset Custody Form Tool" -ForegroundColor Cyan
 Write-Host "======================================" -ForegroundColor Cyan
@@ -29,17 +28,22 @@ try {
     Write-Host "Executing custody form tool..." -ForegroundColor Cyan
     Write-Host ""
 
+    # Get current directory before execution
+    $workingDir = Get-Location
+    $outputFolder = Join-Path $workingDir "Filled"
+
     # Execute the downloaded script
     Invoke-Expression $custodyScript
 
     # Auto-open the most recently created file in the Filled folder
+    Start-Sleep -Seconds 1
     if (Test-Path $outputFolder) {
         $latestFile = Get-ChildItem -Path $outputFolder -Filter "*.xlsx" -ErrorAction SilentlyContinue | Sort-Object CreationTime -Descending | Select-Object -First 1
         if ($latestFile) {
             Write-Host ""
-            Write-Host "Opening generated form..." -ForegroundColor Cyan
-            Start-Sleep -Milliseconds 500
-            & $latestFile.FullName
+            Write-Host "Opening generated form: $($latestFile.Name)" -ForegroundColor Green
+            Start-Process $latestFile.FullName
+            Write-Host "File opened in Excel." -ForegroundColor Green
         }
     }
 }
