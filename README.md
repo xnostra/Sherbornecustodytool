@@ -1,56 +1,31 @@
-# Sherborne Custody Tool
+# IT Asset Custody Tracking Automation
 
-A PowerShell automation tool for efficiently managing and populating Sherborne custody forms with comprehensive data management capabilities.
+A fully portable, zero-dependency PowerShell automation script designed to streamline the IT asset handover process. This tool automatically extracts detailed hardware specifications from the local machine and directly writes them into a formatted Excel (`.xlsx`) tracking document.
 
-## Overview
+Designed for field deployments, this script manipulates the Excel file's underlying XML structure using native .NET classes, completely removing the need for Microsoft Excel, COM objects, or external PowerShell modules like `ImportExcel`.
 
-The Sherborne Custody Tool streamlines the process of handling custody form data through automated population and validation. This tool is designed to reduce manual data entry, minimize errors, and improve workflow efficiency for custody form management operations.
+## 🚀 Key Features
 
-## Features
+* **Zero Dependencies:** Uses built-in `System.IO.Compression` classes available in standard Windows PowerShell 5.1+. No module installation or internet access required.
+* **No MS Office Required:** Directly edits the `.xlsx` file structure, making it perfect for freshly formatted machines or offline environments.
+* **Automated Hardware Auditing:** Leverages WMI/CIM to accurately extract:
+  * Device Category (Desktop vs. Laptop)
+  * Brand, Model, and exact System SKU
+  * Device Serial Number / Service Tag
+  * CPU Model and Generation
+  * Total usable RAM (rounded to standard marketing sizes)
+  * Primary OS Drive Storage (ignoring USBs, mapped to standard capacities)
+  * Display Diagonal Size (converted to inches)
+  * GPU / Video Controller details
+* **Smart Excel Formatting:** Dynamically adjusts row heights for multi-line text, shrinks long text to fit specific cells, and injects print-safe page layouts (margins, centering, fit-to-page).
+* **Auto-Elevation:** Automatically detects permission issues and requests Admin elevation if restricted directory access is encountered.
 
-- **Automated Form Population** — Automatically populate custody forms from structured data sources
-- - **Data Validation** — Built-in validation to ensure data accuracy and integrity
-  - - **Batch Processing** — Process multiple forms efficiently in batch operations
-    - - **Error Handling** — Comprehensive error reporting and logging capabilities
-      - - **Excel Integration** — Seamless integration with Excel spreadsheet data (custody form.xlsx)
-        - - **PowerShell Scripting** — Full PowerShell automation capabilities for custom workflows
-         
-          - ## Getting Started
-         
-          - ### Prerequisites
-         
-          - - Windows operating system with PowerShell 5.0 or higher
-            - - Microsoft Excel (for working with custody form templates)
-              - - Appropriate file permissions for target directories
-               
-                - ### Installation
-               
-                - 1. Clone this repository to your local machine
-                  2. 2. Extract the files to your working directory
-                     3. 3. Run the Fill-CustodyForm.ps1 script with appropriate parameters
-                       
-                        4. ### Usage
-                       
-                        5. ```powershell
-                           .\Fill-CustodyForm.ps1 -InputFile "custody form.xlsx" -OutputPath ".\output"
-                           ```
+## 📋 Folder Structure
 
-                           Refer to the script comments for detailed parameter descriptions and usage examples.
+For the script to function correctly, it must be run alongside the target Excel template. The recommended layout for a portable USB drive is:
 
-                           ## Files
-
-                           - **Fill-CustodyForm.ps1** — Main PowerShell automation script
-                           - - **custody form.xlsx** — Template and sample custody form data
-                             - - **.gitattributes** — Git configuration for file handling
-                              
-                               - ## Contributing
-                              
-                               - Contributions are welcome. Please ensure any modifications maintain code quality and documentation standards.
-                              
-                               - ## License
-                              
-                               - This project is provided as-is for authorized use.
-                              
-                               - ## Support
-                              
-                               - For issues, questions, or feature requests, please contact the repository maintainer.
+```text
+CustodyTool/
+├── Fill-CustodyForm.ps1       # The main execution script
+├── custody form.xlsx          # The blank template (MUST remain next to the script)
+└── Filled/                    # Auto-generated directory for completed forms
