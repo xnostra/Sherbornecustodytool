@@ -48,9 +48,9 @@ try {
     Write-Host "Executing custody form tool..." -ForegroundColor Cyan
     Write-Host ""
 
-    # Execute the script from the working directory
+    # Execute the script from the working directory with explicit paths
     Push-Location $workDir
-    & $scriptPath
+    & $scriptPath -TemplatePath $templatePath -OutputFolder (Join-Path $workDir "Filled")
     Pop-Location
 
     # Auto-open the generated file
