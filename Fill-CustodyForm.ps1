@@ -184,9 +184,11 @@ function Set-PrintLayout {
     $pageSetUpPr.SetAttribute('fitToPage', '1')
     $printOptions = Get-OrAddElement 'printOptions'; $printOptions.SetAttribute('horizontalCentered', '1')
     $pageMargins = Get-OrAddElement 'pageMargins'
-    $pageMargins.SetAttribute('left', '0.5'); $pageMargins.SetAttribute('right', '0.5'); $pageMargins.SetAttribute('top', '0.75'); $pageMargins.SetAttribute('bottom', '0.75'); $pageMargins.SetAttribute('header', '0.3'); $pageMargins.SetAttribute('footer', '0.3')
+    $pageMargins.SetAttribute('left', '0.3'); $pageMargins.SetAttribute('right', '0.3'); $pageMargins.SetAttribute('top', '0.5'); $pageMargins.SetAttribute('bottom', '0.5'); $pageMargins.SetAttribute('header', '0.25'); $pageMargins.SetAttribute('footer', '0.25')
     $pageSetup = Get-OrAddElement 'pageSetup'
-    $pageSetup.SetAttribute('fitToWidth', '1'); $pageSetup.SetAttribute('fitToHeight', '1'); $pageSetup.SetAttribute('orientation', 'portrait')
+    $pageSetup.SetAttribute('paperSize', '9')  # A4
+    $pageSetup.SetAttribute('orientation', 'portrait')
+    $pageSetup.SetAttribute('scale', '150')  # Scale to 150% to fill page
 }
 
 function Get-NearestStandardSize {
