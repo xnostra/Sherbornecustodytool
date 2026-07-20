@@ -155,12 +155,10 @@ For issues: Open a GitHub issue or check hardware detection with `Get-CimInstanc
 
 ## License
 
-Provided as-is. Modify and distribute freely.
+MIT — see [`LICENSE`](LICENSE).
 
 ---
 
 **One-Liner**: `irm https://raw.githubusercontent.com/xnostra/Sherbornecustodytool/main/invoke-custody.ps1 | iex`
 
 **Repository**: https://github.com/xnostra/Sherbornecustodytool
-
-**Last Updated**: 2026-07-20
