@@ -28,25 +28,31 @@ try {
     Write-Host "Executing custody form tool..." -ForegroundColor Cyan
     Write-Host ""
 
-    # Store current directory to find output files later
-    $startDir = Get-Location
-    $startTime = Get-Date
+    # Capture output from the script
+    $output = Invoke-Expression $custodyScript
 
-    # Execute the downloaded script
-    Invoke-Expression $custodyScript
+    # Look for the file path in the output
+    $formPath = $null
+    if ($output) {
+        foreach ($line in $output) {
+            if ($line -match "FORMPATH:(.+)") {
+                $formPath = $matches[1]
+                break
+            }
+        }
+    }
 
     # Give it time to finish writing the file
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 1
 
-    # Look for the most recently created .xlsx file in current directory and subdirectories
-    $recentFiles = Get-ChildItem -Path $startDir -Filter "*.xlsx" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.CreationTime -gt $startTime } | Sort-Object CreationTime -Descending
-
-    if ($recentFiles) {
-        $fileToOpen = $recentFiles[0]
+    # If we found the path, open it
+    if ($formPath -and (Test-Path $formPath)) {
         Write-Host ""
         Write-Host "Opening generated form..." -ForegroundColor Green
-        Start-Process $fileToOpen.FullName
-        Write-Host "File opened: $($fileToOpen.Name)" -ForegroundColor Green
+        Start-Process $formPath
+        Write-Host "File opened successfully!" -ForegroundColor Green
+    } elseif ($formPath) {
+        Write-Host "File was created at: $formPath" -ForegroundColor Yellow
     }
 }
 catch {

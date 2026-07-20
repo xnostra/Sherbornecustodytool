@@ -341,4 +341,8 @@ Fill-Workbook -Path $newFormPath -Values $values -SheetName "ITAssetTrackForm" -
 Write-Status "`nForm completed!" -Level Success
 Write-Host "Saved: $newFormPath`n"
 Write-Status "Ready to print." -Level Info
+
+# Output the file path for launcher script to capture
+Write-Host "FORMPATH:$newFormPath" -ForegroundColor DarkGray
+
 Start-Sleep -Seconds 2
