@@ -183,9 +183,12 @@ function Set-PrintLayout {
     $cols = Get-OrAddElement 'cols'
     $cols.RemoveAll() | Out-Null
     $colWidths = @(
-        @{min=1; max=1; width=2.5},
-        @{min=2; max=2; width=3},
-        @{min=3; max=6; width=4.5}
+        @{min=1; max=1; width=3.5},
+        @{min=2; max=2; width=4},
+        @{min=3; max=3; width=5},
+        @{min=4; max=4; width=5},
+        @{min=5; max=5; width=5},
+        @{min=6; max=6; width=4.5}
     )
     foreach ($colSpec in $colWidths) {
         $col = $SheetXml.CreateElement('col', $ns)
@@ -204,8 +207,7 @@ function Set-PrintLayout {
     $pageMargins = Get-OrAddElement 'pageMargins'
     $pageMargins.SetAttribute('left', '0.25'); $pageMargins.SetAttribute('right', '0.25'); $pageMargins.SetAttribute('top', '0.4'); $pageMargins.SetAttribute('bottom', '0.4'); $pageMargins.SetAttribute('header', '0.2'); $pageMargins.SetAttribute('footer', '0.2')
     $pageSetup = Get-OrAddElement 'pageSetup'
-    $pageSetup.SetAttribute('scale', '100')
-    $pageSetup.SetAttribute('fitToWidth', '1'); $pageSetup.SetAttribute('fitToHeight', '0'); $pageSetup.SetAttribute('orientation', 'portrait')
+    $pageSetup.SetAttribute('fitToWidth', '1'); $pageSetup.SetAttribute('fitToHeight', '1'); $pageSetup.SetAttribute('orientation', 'portrait')
 }
 
 function Get-NearestStandardSize {
