@@ -1,0 +1,6 @@
+# Generated at runtime - contains real names/asset data, never commit these
+Filled/
+CustodyForm.log
+
+# Local update-state marker (if present from other tools in this family)
+*.update-state

@@ -28,7 +28,7 @@
 
 .NOTES
     Author: Sherborne Custody Tool Team
-    Version: 2.0
+    Version: 2.6
     Requires: Windows 10/11, PowerShell 5.1+
     LastModified: 2026-07-20
     Dependencies: None (zero external dependencies)
@@ -41,13 +41,17 @@
 [CmdletBinding()]
 param(
     [string]$TemplatePath = "",
-    [string]$OutputFolder = ""
+    [string]$OutputFolder = "",
+    [switch]$EmailForm  # if set, also uploads the finished form to OneDrive so the email-relay flow picks it up
 )
 
 $ErrorActionPreference = "Stop"
 
-# Handle PSScriptRoot being empty when run via Invoke-Expression
+# Handle PSScriptRoot/PSCommandPath being empty when run via Invoke-Expression (e.g. the .bat
+# launcher pipes this file's text into PowerShell instead of running it as a file, so that it
+# still works on computers where running .ps1 FILES is disabled by policy).
 $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$scriptSelf = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $scriptRoot 'Fill-CustodyForm.ps1' }
 
 # Set defaults if not provided
 if (-not $TemplatePath) {
@@ -62,10 +66,24 @@ $GiBtoGB = 1.073741824
 $ramStandards     = 1,2,3,4,6,8,12,16,24,32,48,64,96,128,192,256,384,512
 $storageStandards = 16,32,64,120,128,240,250,256,320,480,500,512,640,750,960,1000,1024,1500,1920,2000,2048,3000,3840,4000,4096,6000,8000,10000,16000
 
+# Every run's messages are also written to a log file next to the script, so if the window closes
+# before you can read/copy an error, the full text is still sitting there afterward. On any error,
+# the log auto-opens in Notepad so you don't have to go hunting for it.
+$script:LogPath = Join-Path $scriptRoot 'CustodyForm.log'
+function Write-Log {
+    param([string]$Message)
+    try { Add-Content -LiteralPath $script:LogPath -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $Message" -ErrorAction Stop } catch { }
+}
+
 function Write-Status {
     param([string]$Message, [ValidateSet('Info', 'Success', 'Warning', 'Error')] [string]$Level = 'Info')
     $colors = @{ 'Info' = 'Cyan'; 'Success' = 'Green'; 'Warning' = 'Yellow'; 'Error' = 'Red' }
     Write-Host $Message -ForegroundColor $colors[$Level]
+    Write-Log "[$Level] $Message"
+}
+
+function Open-LogOnError {
+    try { Start-Process notepad.exe -ArgumentList $script:LogPath -ErrorAction Stop } catch { }
 }
 
 trap {
@@ -73,17 +91,33 @@ trap {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if ($msg -match 'Access.*denied|UnauthorizedAccessException|requires elevation' -and -not $isAdmin) {
         Write-Status "Admin rights needed - requesting elevation..." -Level Warning
-        Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -TemplatePath `"$TemplatePath`" -OutputFolder `"$OutputFolder`""
+        # Encoded command instead of "-File $scriptSelf" so the elevated relaunch still works even
+        # if running script FILES is disabled by policy on this machine. Calling a .ps1 file with
+        # "&" is still subject to Execution Policy even from inside an -EncodedCommand, so instead
+        # the inner command reads this file's own text and runs it as a scriptblock (not a file) -
+        # that is never subject to Execution Policy, and normal param() binding still works.
+        $elevInner   = "& ([scriptblock]::Create((Get-Content -Raw -LiteralPath '$scriptSelf'))) -TemplatePath '$TemplatePath' -OutputFolder '$OutputFolder'"
+        $elevEncoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($elevInner))
+        Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $elevEncoded"
         exit 0
     }
     Write-Status "`nERROR:" -Level Error
     Write-Status $_.Exception.Message -Level Error
     Write-Status $_.InvocationInfo.PositionMessage -Level Warning
+    Open-LogOnError
     Read-Host "Press Enter to close"
     exit 1
 }
 
-Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction SilentlyContinue
+# Auto-allow running this tool's scripts: try CurrentUser first (no admin needed), then Process
+# scope as a fallback. This only relaxes the policy for future runs / this session - it does not
+# touch machine-wide policy. If a GPO enforces a stricter policy above these scopes, Set-ExecutionPolicy
+# throws a SecurityException that -ErrorAction can't suppress (it's a terminating error, not the
+# kind -ErrorAction SilentlyContinue catches) - so each call is wrapped in try/catch instead. Either
+# way this is a no-op on a GPO-locked machine, which is exactly why the .bat launcher pipes the
+# script instead of running it as a file (that path works regardless of what this can or can't change).
+try { Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop } catch { }
+try { Set-ExecutionPolicy Bypass -Scope Process -Force -ErrorAction Stop } catch { }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 Add-Type -AssemblyName System.IO.Compression
 
@@ -344,12 +378,106 @@ $values = @{
     "C36" = $dateIssued.ToUpper()
 }
 
-$descLineCount = ($itemDescription -split "`n").Count
-$autoRowHeight = ($descLineCount + 1) * 14
+# Row 9 height is fixed (rather than auto-calculated from line count) to match the form's print layout.
+$row9Height = 172.8
 
-Fill-Workbook -Path $newFormPath -Values $values -SheetName "ITAssetTrackForm" -WrapCells @("C9") -ShrinkCells @("E9") -RowHeights @{ "9" = $autoRowHeight }
+Fill-Workbook -Path $newFormPath -Values $values -SheetName "ITAssetTrackForm" -WrapCells @("C9") -ShrinkCells @("E9") -RowHeights @{ "9" = $row9Height }
 
 Write-Status "`nForm completed!" -Level Success
 Write-Host "Saved: $newFormPath`n"
 Write-Status "Ready to print." -Level Info
+
+# Read the finished form's bytes into memory BEFORE opening it in Excel - once Excel has it open,
+# Windows locks the file and a later read (e.g. for emailing) fails with "being used by another
+# process". Reading it now means the upload step below never has to touch the file on disk again.
+$formBytesForEmail = $null
+try { $formBytesForEmail = [System.IO.File]::ReadAllBytes($newFormPath) } catch { }
+
+# Auto-open the finished form so it works the same way whether launched via the .bat, the
+# one-liner, or directly - previously only the one-liner's wrapper opened the file.
+try {
+    Write-Status "Opening file..." -Level Info
+    Start-Process -FilePath $newFormPath -ErrorAction Stop
+} catch {
+    Write-Status "Could not auto-open the file - open it manually from: $newFormPath" -Level Warning
+}
+
+# Optional: email the finished form by uploading it to a OneDrive folder that a Power Automate
+# flow watches ("When a file is created" -> "Send an email (V2)" to jcarlos@sherborneqatar.org).
+# No mail credential or app secret lives in this script - it only ever gets a short-lived Graph
+# sign-in token for whoever is running the tool, via the interactive "device code" flow (the same
+# kind of "go to microsoft.com/devicelogin and enter this code" sign-in used by many CLI tools).
+# No external module needed - just plain REST calls, consistent with this tool's zero-dependency design.
+if ($EmailForm) {
+    try {
+        Write-Status "`nSigning in to email the form (uses your Microsoft 365 account)..." -Level Info
+
+        # Uses the well-known Microsoft Graph PowerShell/CLI public client ID (no app registration
+        # needed on your end) with the device code flow: safe to use in a public script because it
+        # never handles or stores a password - only a short-lived, single-purpose sign-in code.
+        $clientId = '14d82eec-204b-4c2f-b7e8-296a70dab67e'
+        $tenant   = 'common'
+        $scope    = 'Files.ReadWrite'
+
+        $deviceResp = Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$tenant/oauth2/v2.0/devicecode" -Body @{ client_id = $clientId; scope = $scope } -ErrorAction Stop
+
+        # Microsoft's device-code sign-in page does NOT auto-fill the code (this is a Microsoft
+        # limitation, not something this script can bypass) - you always have to type or paste it
+        # in yourself. To make that as painless as possible: the code is copied to your clipboard
+        # automatically, so you can just paste it into the box on the page that opens.
+        Write-Status "`n=========================================================" -Level Warning
+        Write-Status "  Sign-in code: $($deviceResp.user_code)" -Level Warning
+        Write-Status "  (already copied to your clipboard - just paste it in)" -Level Warning
+        Write-Status "=========================================================`n" -Level Warning
+        try { Set-Clipboard -Value $deviceResp.user_code -ErrorAction Stop } catch { }
+
+        try {
+            Start-Process $deviceResp.verification_uri -ErrorAction Stop
+        } catch {
+            Write-Status "Could not auto-open the browser - go to $($deviceResp.verification_uri) manually." -Level Warning
+        }
+
+        $token = $null
+        $deadline = (Get-Date).AddSeconds($deviceResp.expires_in)
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds $deviceResp.interval
+            try {
+                $tokenResp = Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$tenant/oauth2/v2.0/token" -Body @{
+                    grant_type  = 'urn:ietf:params:oauth:grant-type:device_code'
+                    client_id   = $clientId
+                    device_code = $deviceResp.device_code
+                } -ErrorAction Stop
+                $token = $tokenResp.access_token
+                break
+            } catch {
+                $err = $_.ErrorDetails.Message | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if ($err.error -eq 'authorization_pending') { continue }  # user hasn't finished signing in yet - keep polling
+                throw
+            }
+        }
+
+        if (-not $token) {
+            Write-Status "Sign-in timed out - skipping auto-email. The form is still saved at: $newFormPath" -Level Warning
+        } elseif (-not $formBytesForEmail) {
+            Write-Status "Could not read the form's contents earlier - skipping auto-email. The form is still saved at: $newFormPath" -Level Warning
+        } else {
+            Write-Status "Signed in - uploading form to OneDrive for emailing..." -Level Info
+            # Uses the copy read into memory before the file was opened in Excel (see above) -
+            # avoids "file in use" errors now that Excel has it open for you to view/print.
+            $uploadUrl = "https://graph.microsoft.com/v1.0/me/drive/root:/CustodyFormsToEmail/$([Uri]::EscapeDataString($newFileName)):/content"
+            Invoke-RestMethod -Method Put -Uri $uploadUrl -Headers @{ Authorization = "Bearer $token" } -Body $formBytesForEmail -ContentType 'application/octet-stream' -ErrorAction Stop | Out-Null
+            Write-Status "Uploaded - the email will arrive at jcarlos@sherborneqatar.org within a few minutes (the free OneDrive trigger checks periodically, not instantly)." -Level Success
+        }
+    } catch {
+        # Capture the real underlying error detail (Graph/Microsoft errors often put the useful
+        # message in ErrorDetails rather than the generic Exception.Message), and log it in full
+        # so it's there to read/copy even after the window closes.
+        $detail = $_.Exception.Message
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $detail = "$detail | $($_.ErrorDetails.Message)" }
+        Write-Status "Could not email the form automatically - it's still saved at: $newFormPath" -Level Warning
+        Write-Log "[Error] Email upload failed: $detail"
+        Open-LogOnError
+    }
+}
+
 Start-Sleep -Seconds 2
