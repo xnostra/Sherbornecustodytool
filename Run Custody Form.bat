@@ -11,7 +11,7 @@ REM blocks double-clicking/running .ps1 FILES whenever script execution is disab
 REM group policy, which "-ExecutionPolicy Bypass" cannot override. A scriptblock isn't a file, so
 REM Execution Policy never applies, and it lets us pass -EmailForm through with normal param()
 REM binding (plain Invoke-Expression would just have param() overwrite it).
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$sb = [scriptblock]::Create((Get-Content -Raw -LiteralPath '%~dp0Fill-CustodyForm.ps1')); if ('%AUTO_EMAIL%' -eq '1') { & $sb -EmailForm } else { & $sb }"
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -Command "$sb = [scriptblock]::Create((Get-Content -Raw -LiteralPath '%~dp0Fill-CustodyForm.ps1')); if ('%AUTO_EMAIL%' -eq '1') { & $sb -EmailForm } else { & $sb }"
 
 set "RC=%errorlevel%"
 if not "%RC%"=="0" (

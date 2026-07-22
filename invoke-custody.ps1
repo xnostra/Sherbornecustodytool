@@ -8,9 +8,9 @@
     irm https://raw.githubusercontent.com/xnostra/Sherbornecustodytool/main/invoke-custody.ps1 | iex
 
 .NOTES
-    Version: 2.6
+    Version: 2.8
     Author: Sherborne Custody Tool Team
-    LastModified: 2026-07-20
+    LastModified: 2026-07-22
 
 .LINK
     https://github.com/xnostra/Sherbornecustodytool

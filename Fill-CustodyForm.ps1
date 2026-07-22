@@ -28,9 +28,9 @@
 
 .NOTES
     Author: Sherborne Custody Tool Team
-    Version: 2.6
+    Version: 3.0
     Requires: Windows 10/11, PowerShell 5.1+
-    LastModified: 2026-07-20
+    LastModified: 2026-07-22
     Dependencies: None (zero external dependencies)
 
 .LINK
@@ -70,6 +70,25 @@ $storageStandards = 16,32,64,120,128,240,250,256,320,480,500,512,640,750,960,100
 # before you can read/copy an error, the full text is still sitting there afterward. On any error,
 # the log auto-opens in Notepad so you don't have to go hunting for it.
 $script:LogPath = Join-Path $scriptRoot 'CustodyForm.log'
+$script:LogMaxBytes = 2MB  # after months of daily use this would otherwise grow forever
+
+# If the log has grown past the cap, trim it down to roughly its last quarter before this run adds
+# more - keeps recent history for troubleshooting without letting the file grow unbounded.
+try {
+    $existingLog = Get-Item -LiteralPath $script:LogPath -ErrorAction Stop
+    if ($existingLog.Length -gt $script:LogMaxBytes) {
+        # @() forces an array even if the file happens to be a single line, so the range index
+        # below always works against a real line collection rather than being treated as one string.
+        $allLines = @(Get-Content -LiteralPath $script:LogPath -ErrorAction Stop)
+        if ($allLines.Count -gt 4) {
+            $keepFrom = [Math]::Max(0, $allLines.Count - [Math]::Floor($allLines.Count / 4))
+            $trimmed = $allLines[$keepFrom..($allLines.Count - 1)]
+            Set-Content -LiteralPath $script:LogPath -Value $trimmed -ErrorAction Stop
+            Add-Content -LiteralPath $script:LogPath -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [Info] Log file exceeded $($script:LogMaxBytes / 1MB)MB - older entries were trimmed to keep it from growing unbounded." -ErrorAction Stop
+        }
+    }
+} catch { }
+
 function Write-Log {
     param([string]$Message)
     try { Add-Content -LiteralPath $script:LogPath -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $Message" -ErrorAction Stop } catch { }
@@ -96,9 +115,12 @@ trap {
         # "&" is still subject to Execution Policy even from inside an -EncodedCommand, so instead
         # the inner command reads this file's own text and runs it as a scriptblock (not a file) -
         # that is never subject to Execution Policy, and normal param() binding still works.
-        $elevInner   = "& ([scriptblock]::Create((Get-Content -Raw -LiteralPath '$scriptSelf'))) -TemplatePath '$TemplatePath' -OutputFolder '$OutputFolder'"
+        # Preserve -EmailForm across the elevation relaunch - otherwise a run started with emailing
+        # requested would silently lose that after elevating and finish without emailing at all.
+        $elevEmailArg = if ($EmailForm) { ' -EmailForm' } else { '' }
+        $elevInner   = "& ([scriptblock]::Create((Get-Content -Raw -LiteralPath '$scriptSelf'))) -TemplatePath '$TemplatePath' -OutputFolder '$OutputFolder'$elevEmailArg"
         $elevEncoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($elevInner))
-        Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $elevEncoded"
+        Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -EncodedCommand $elevEncoded"
         exit 0
     }
     Write-Status "`nERROR:" -Level Error
@@ -277,6 +299,30 @@ function Fill-Workbook {
     } finally { $zip.Dispose() }
 }
 
+$defaultUser = $env:USERNAME
+$dateIssued  = Get-Date -Format "dd-MMM-yyyy"
+# Safe defaults in case this is NOT a computer/laptop (skips auto-detection entirely) and the
+# category/description boxes in the popup form are left blank - never leave these undefined.
+$itemCategory = "Other Equipment"
+$itemDescription = ""
+
+# Ask first whether this is even a computer/laptop - hardware auto-detection only makes sense when
+# the tool is running ON the device being handed over. For other items (clickers, projectors,
+# screens, etc.) you're filling this out from your OWN computer, so everything must be typed in
+# by hand instead of auto-detected from this machine's own hardware.
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$isComputerResult = [System.Windows.Forms.MessageBox]::Show(
+    "Is this a computer or laptop (the tool is running ON the device being handed over)?`n`nChoose No for other items - projectors, clickers, screens, etc. - where you'll type the details in yourself.",
+    'IT Asset Custody Form Tool',
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Question
+)
+$isThisAComputer = ($isComputerResult -eq [System.Windows.Forms.DialogResult]::Yes)
+
+if ($isThisAComputer) {
+
 Write-Status "Detecting hardware..." -Level Info
 $cs   = Get-CimInstance Win32_ComputerSystem
 $bios = Get-CimInstance Win32_BIOS
@@ -289,8 +335,87 @@ $isLaptop = ($enc.ChassisTypes | Where-Object { $laptopTypes -contains $_ }).Cou
 $itemCategory = if ($isLaptop) { "Laptop/Notebook" } else { "Desktop Computer" }
 
 $modelName = $cs.Model; $sysSku = $cs.SystemSKUNumber
-$brandModel = "$($cs.Manufacturer) $modelName".Trim()
-if ($sysSku -and $sysSku.Trim() -ne '' -and $sysSku.Trim() -ne $modelName.Trim()) { $brandModel += " (SKU: $($sysSku.Trim()))" }
+$rawManufacturer = $cs.Manufacturer.Trim()
+
+# Placeholder/junk values seen on generic, misconfigured, or white-box motherboards - never show
+# these as the "model" (or, further below, as the "manufacturer").
+$junkPatterns = 'System Product Name|To Be Filled|Default string|O\.?E\.?M\.?|Not Applicable|None|N/A|Not Specified|Unknown'
+
+# Manufacturer field often reports the full legal entity name rather than the brand name everyone
+# actually recognizes (e.g. "Dell Inc." vs "Dell", "ASUSTeK COMPUTER INC." vs "ASUS") - normalize
+# the common ones to their everyday brand name so the result reads naturally.
+$manufacturer = switch -Regex ($rawManufacturer) {
+    'LENOVO'                      { 'Lenovo'; break }
+    'Hewlett-Packard|^HP$'        { 'HP'; break }
+    'Dell'                        { 'Dell'; break }
+    'ASUSTeK'                     { 'ASUS'; break }
+    'Acer'                        { 'Acer'; break }
+    'Microsoft'                   { 'Microsoft'; break }
+    'Apple'                       { 'Apple'; break }
+    'Toshiba|Dynabook'            { 'Toshiba'; break }
+    'Samsung'                     { 'Samsung'; break }
+    'Gigabyte'                    { 'Gigabyte'; break }
+    'MSI|Micro-Star'              { 'MSI'; break }
+    default                       { $rawManufacturer }
+}
+if ($manufacturer -match $junkPatterns) { $manufacturer = 'Unknown brand' }
+
+# Build a clean, human-friendly "Brand Model" name that works across brands, then keep the exact
+# system model number/SKU in parentheses afterward for asset records - not just for Lenovo.
+#
+# Different brands expose the friendly name differently:
+#  - Lenovo: Model is a bare code (e.g. "21SX001TGR"); the friendly name is embedded in
+#    SystemSKUNumber instead (e.g. "LENOVO_MT_21SX_BU_THINK_FM_THINKPAD E14 GEN 7" -> everything
+#    after "_FM_").
+#  - Dell, HP, Microsoft Surface, Acer, Asus, etc.: Model is usually already friendly on its own
+#    (e.g. "Latitude 5420", "HP EliteBook 840 G8", "Surface Laptop 4") - just needs light cleanup
+#    (removing a duplicated brand name, trimming placeholder junk).
+#  - Generic/white-box/OEM builds: Model is often meaningless placeholder text (e.g. "System
+#    Product Name", "To Be Filled By O.E.M.") - detect and fall back to something honest instead
+#    of showing garbage.
+$friendlyModel = $null
+$modelWasDeduped = $false  # true when $friendlyModel came from Model with a duplicated brand prefix stripped off
+
+if ($rawManufacturer -match 'LENOVO' -and $sysSku -match '_FM_(.+)$') {
+    $friendlyModel = $Matches[1].Trim()
+    # Title-case it (e.g. "THINKPAD E14 GEN 7" -> "ThinkPad E14 Gen 7") without breaking existing
+    # mixed-case product codes - only reformat words that are all-uppercase in the source string.
+    $friendlyModel = ($friendlyModel -split ' ' | ForEach-Object {
+        if ($_ -cmatch '^[A-Z0-9]+$' -and $_.Length -gt 1) {
+            if ($_ -eq 'THINKPAD') { 'ThinkPad' }
+            elseif ($_ -eq 'THINKCENTRE') { 'ThinkCentre' }
+            elseif ($_ -eq 'THINKBOOK') { 'ThinkBook' }
+            elseif ($_ -eq 'IDEAPAD') { 'IdeaPad' }
+            elseif ($_ -eq 'GEN') { 'Gen' }
+            elseif ($_ -match '^\d') { $_ }  # keep model numbers like "E14" or "21SX" as-is
+            else { (Get-Culture).TextInfo.ToTitleCase($_.ToLower()) }
+        } else { $_ }
+    }) -join ' '
+} elseif ($modelName -and $modelName.Trim() -ne '' -and $modelName.Trim() -notmatch $junkPatterns) {
+    $cleanModel = $modelName.Trim()
+    # Some vendors (notably HP, ASUS) duplicate the brand name inside Model itself, e.g. Manufacturer
+    # "HP" + Model "HP EliteBook 840 G8" - strip the leading duplicate so it doesn't show twice.
+    # Checked against both the normalized brand name and the raw manufacturer string, since the
+    # duplication in Model could use either form.
+    foreach ($prefix in @($manufacturer, $rawManufacturer) | Select-Object -Unique) {
+        if ($prefix -and $cleanModel -match "^$([regex]::Escape($prefix))\s+") {
+            $cleanModel = $cleanModel -replace "^$([regex]::Escape($prefix))\s+", ''
+            $modelWasDeduped = $true
+            break
+        }
+    }
+    $friendlyModel = $cleanModel
+}
+
+$brandModel = if ($friendlyModel) { "$manufacturer $friendlyModel".Trim() } else { "$manufacturer (model not reported by this device)".Trim() }
+# Keep the exact system model number available for asset records, distinct from the friendly name -
+# skip it if it's junk, if it's the same text already shown, or if $friendlyModel came from Model
+# itself with a duplicated brand prefix stripped off (that's the SAME underlying value, just with
+# "HP "/"ASUS " trimmed - showing it again in parentheses would just repeat the model, e.g.
+# "HP EliteBook 840 G8 (HP EliteBook 840 G8)").
+if ($modelName -and $modelName.Trim() -ne '' -and $modelName.Trim() -notmatch $junkPatterns -and $modelName.Trim() -ne $friendlyModel -and -not $modelWasDeduped) {
+    $brandModel += " ($($modelName.Trim()))"
+}
 
 $cpuName = $cpu.Name -replace '\s+', ' '
 $cpuGen = $null
@@ -339,19 +464,158 @@ try {
 }
 
 $deviceSerial = if ($bios.SerialNumber) { $bios.SerialNumber.Trim() } else { "Unknown" }
-$defaultUser = $env:USERNAME
-$dateIssued  = Get-Date -Format "dd-MMM-yyyy"
-$itemDescription = "$brandModel`nDevice Serial: $deviceSerial`nCPU: $cpuFull`nOS: $osInfo`nRAM: ${ramGB}GB`nGPU: $gpuInfo`nScreen: $screenSize`nStorage: $storageInfo"
+$itemDescription = "Model: $brandModel`nDevice Serial: $deviceSerial`nCPU: $cpuFull`nOS: $osInfo`nRAM: ${ramGB}GB`nGPU: $gpuInfo`nScreen: $screenSize`nStorage: $storageInfo"
 
 Write-Status "`nDetected specifications:" -Level Success
-Write-Host "  Category : $itemCategory`n  Brand    : $brandModel`n  Serial   : $deviceSerial`n  CPU      : $cpuFull`n  OS       : $osInfo`n  RAM      : ${ramGB}GB`n  GPU      : $gpuInfo`n  Screen   : $screenSize`n  Storage  : $storageInfo`n  Username : $defaultUser`n"
+Write-Host "  Model    : $brandModel`n  Category : $itemCategory`n  Serial   : $deviceSerial`n  CPU      : $cpuFull`n  OS       : $osInfo`n  RAM      : ${ramGB}GB`n  GPU      : $gpuInfo`n  Screen   : $screenSize`n  Storage  : $storageInfo`n  Username : $defaultUser`n"
 
-$location   = Read-Host "Location (e.g., Qatar, BH, UK)"
+} else {
+    # Not a computer/laptop - skip all hardware auto-detection, everything gets typed in manually
+    # via the popup form below (an extra "Item Category" and "Item Description" box appears in
+    # that case, since there's nothing to auto-fill them from).
+    Write-Status "Not a computer/laptop - you'll enter all the item details manually." -Level Info
+}
+
+# Popup form instead of typing answers into the console - clearer about what's expected, and
+# Location is a dropdown (fixed list) instead of free text so it can't be mistyped/inconsistent.
+
+$locationOptions = @('MALL OF QATAR', 'BANI HAJER', 'BOYS SCHOOL', 'GIRLS SCHOOL')
+
+$formHeight = if ($isThisAComputer) { 340 } else { 470 }
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'IT Asset Custody Form - Details'
+$form.Size = New-Object System.Drawing.Size(420, $formHeight)
+$form.StartPosition = 'CenterScreen'
+$form.FormBorderStyle = 'FixedDialog'
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$form.TopMost = $true
+
+$y = 20
+$labelLocation = New-Object System.Windows.Forms.Label
+$labelLocation.Text = 'Location:'
+$labelLocation.Location = New-Object System.Drawing.Point(20, $y)
+$labelLocation.AutoSize = $true
+$form.Controls.Add($labelLocation)
+
+$comboLocation = New-Object System.Windows.Forms.ComboBox
+$comboLocation.Location = New-Object System.Drawing.Point(160, ($y - 3))
+$comboLocation.Size = New-Object System.Drawing.Size(220, 24)
+$comboLocation.DropDownStyle = 'DropDownList'  # choose only from the list, can't type a new value
+$comboLocation.Items.AddRange($locationOptions)
+$comboLocation.SelectedIndex = 0
+$form.Controls.Add($comboLocation)
+
+$y += 45
+$labelDept = New-Object System.Windows.Forms.Label
+$labelDept.Text = 'Department:'
+$labelDept.Location = New-Object System.Drawing.Point(20, $y)
+$labelDept.AutoSize = $true
+$form.Controls.Add($labelDept)
+
+$textDept = New-Object System.Windows.Forms.TextBox
+$textDept.Location = New-Object System.Drawing.Point(160, ($y - 3))
+$textDept.Size = New-Object System.Drawing.Size(220, 24)
+$form.Controls.Add($textDept)
+
+$y += 45
+$labelName = New-Object System.Windows.Forms.Label
+$labelName.Text = "Custodian name`n(leave blank for `"$defaultUser`"):"
+$labelName.Location = New-Object System.Drawing.Point(20, $y)
+$labelName.AutoSize = $true
+$form.Controls.Add($labelName)
+
+$textName = New-Object System.Windows.Forms.TextBox
+$textName.Location = New-Object System.Drawing.Point(160, ($y - 3))
+$textName.Size = New-Object System.Drawing.Size(220, 24)
+$form.Controls.Add($textName)
+
+$y += 60
+$labelAsset = New-Object System.Windows.Forms.Label
+$labelAsset.Text = 'Asset Tag Number:'
+$labelAsset.Location = New-Object System.Drawing.Point(20, $y)
+$labelAsset.AutoSize = $true
+$form.Controls.Add($labelAsset)
+
+$textAsset = New-Object System.Windows.Forms.TextBox
+$textAsset.Location = New-Object System.Drawing.Point(160, ($y - 3))
+$textAsset.Size = New-Object System.Drawing.Size(220, 24)
+$form.Controls.Add($textAsset)
+
+# Only shown for non-computer items (clicker, projector, screen, etc.) - nothing was auto-detected
+# for these, so the category and description have to be typed in by hand.
+$textCategory = $null
+$textDescription = $null
+if (-not $isThisAComputer) {
+    $y += 45
+    $labelCategory = New-Object System.Windows.Forms.Label
+    $labelCategory.Text = "Item Category`n(e.g. Projector, Clicker):"
+    $labelCategory.Location = New-Object System.Drawing.Point(20, $y)
+    $labelCategory.AutoSize = $true
+    $form.Controls.Add($labelCategory)
+
+    $textCategory = New-Object System.Windows.Forms.TextBox
+    $textCategory.Location = New-Object System.Drawing.Point(160, ($y - 3))
+    $textCategory.Size = New-Object System.Drawing.Size(220, 24)
+    $form.Controls.Add($textCategory)
+
+    $y += 60
+    $labelDescription = New-Object System.Windows.Forms.Label
+    $labelDescription.Text = "Item Description`n(brand/model/serial, etc.):"
+    $labelDescription.Location = New-Object System.Drawing.Point(20, $y)
+    $labelDescription.AutoSize = $true
+    $form.Controls.Add($labelDescription)
+
+    $textDescription = New-Object System.Windows.Forms.TextBox
+    $textDescription.Location = New-Object System.Drawing.Point(160, ($y - 3))
+    $textDescription.Size = New-Object System.Drawing.Size(220, 60)
+    $textDescription.Multiline = $true
+    $form.Controls.Add($textDescription)
+}
+
+$y += 55
+$okButton = New-Object System.Windows.Forms.Button
+$okButton.Text = 'Generate Form'
+$okButton.Location = New-Object System.Drawing.Point(160, $y)
+$okButton.Size = New-Object System.Drawing.Size(120, 32)
+$okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+$form.Controls.Add($okButton)
+$form.AcceptButton = $okButton
+
+# Validate required fields before letting the dialog close - Department and Asset Tag always
+# required; for non-computer items, Category and Description are required too since there's
+# nothing auto-detected to fall back on.
+$okButton.Add_Click({
+    $missing = @()
+    if (-not $textDept.Text.Trim())  { $missing += 'Department' }
+    if (-not $textAsset.Text.Trim()) { $missing += 'Asset Tag Number' }
+    if (-not $isThisAComputer) {
+        if (-not $textCategory.Text.Trim())    { $missing += 'Item Category' }
+        if (-not $textDescription.Text.Trim()) { $missing += 'Item Description' }
+    }
+    if ($missing.Count -gt 0) {
+        [System.Windows.Forms.MessageBox]::Show("Please fill in: $($missing -join ', ')", 'Missing information', 'OK', 'Warning') | Out-Null
+        $form.DialogResult = [System.Windows.Forms.DialogResult]::None
+    }
+})
+
+$dialogResult = $form.ShowDialog()
+if ($dialogResult -ne [System.Windows.Forms.DialogResult]::OK) {
+    Write-Status "Cancelled - no form was generated." -Level Warning
+    exit 0
+}
+
+$location   = $comboLocation.SelectedItem.ToString()
 $company    = "Sherborne $location".Trim()
-$department = Read-Host "Department"
-$staffName  = Read-Host "Staff/Custodian name [$defaultUser]"
+$department = $textDept.Text.Trim()
+$staffName  = $textName.Text.Trim()
 if ([string]::IsNullOrWhiteSpace($staffName)) { $staffName = $defaultUser }
-$serialTag  = Read-Host "Asset Tag Number"
+$serialTag  = $textAsset.Text.Trim()
+
+if (-not $isThisAComputer) {
+    if ($textCategory.Text.Trim())    { $itemCategory    = $textCategory.Text.Trim() }
+    if ($textDescription.Text.Trim()) { $itemDescription = $textDescription.Text.Trim() }
+}
 
 Write-Status "Generating form..." -Level Info
 
@@ -360,6 +624,20 @@ $safeName = ($staffName -replace "[$([regex]::Escape($invalidChars))]", "").Trim
 $fileDate = Get-Date -Format "dd-MM-yyyy"
 $newFileName = "$safeName custody $fileDate.xlsx"
 $newFormPath = Join-Path $OutputFolder $newFileName
+
+# Never silently overwrite an existing form - e.g. two custody forms for the same person on the
+# same day (different assets, or a second staff member using a shared "Filled" location) would
+# otherwise collide on the exact same filename and the first one would be lost with no warning.
+# Add "(2)", "(3)", etc. until the name is free.
+if (Test-Path -LiteralPath $newFormPath) {
+    $copyNum = 2
+    do {
+        $newFileName = "$safeName custody $fileDate ($copyNum).xlsx"
+        $newFormPath = Join-Path $OutputFolder $newFileName
+        $copyNum++
+    } while (Test-Path -LiteralPath $newFormPath)
+    Write-Status "A form for $staffName on $fileDate already existed - saving this one as `"$newFileName`" instead so nothing gets overwritten." -Level Warning
+}
 
 Copy-Item -Path $TemplatePath -Destination $newFormPath -Force
 
@@ -408,7 +686,21 @@ try {
 # sign-in token for whoever is running the tool, via the interactive "device code" flow (the same
 # kind of "go to microsoft.com/devicelogin and enter this code" sign-in used by many CLI tools).
 # No external module needed - just plain REST calls, consistent with this tool's zero-dependency design.
+#
+# TargetDriveId is jcarlos@sherborneqatar.org's OneDrive - uploads always go HERE regardless of
+# which staff account signs in during the device-code step below (the CustodyFormsToEmail folder
+# is shared org-wide with edit access, so any signed-in staff account is allowed to write to it).
+# Without this, "/me/drive/..." would upload to whichever account just signed in's OWN OneDrive
+# instead, which would never reach jcarlos's folder or trigger the email flow.
+$targetDriveId = 'b!bjuGe2fvJ0KHNeTiVjoiPjhIOFedjfpMny1O22T8AlyqM2Vcc-37RZKqA8hym8r7'
 if ($EmailForm) {
+    # Quick connectivity check first - on a computer with no internet (common right after imaging,
+    # before it's joined to Wi-Fi), skip straight to a clear message instead of sitting through the
+    # device-code request's own connection timeout before failing anyway.
+    $hasInternet = Test-Connection -ComputerName 'login.microsoftonline.com' -Count 1 -Quiet -ErrorAction SilentlyContinue
+    if (-not $hasInternet) {
+        Write-Status "No internet connection detected - skipping auto-email. The form is still saved at: $newFormPath" -Level Warning
+    } else {
     try {
         Write-Status "`nSigning in to email the form (uses your Microsoft 365 account)..." -Level Info
 
@@ -417,7 +709,10 @@ if ($EmailForm) {
         # never handles or stores a password - only a short-lived, single-purpose sign-in code.
         $clientId = '14d82eec-204b-4c2f-b7e8-296a70dab67e'
         $tenant   = 'common'
-        $scope    = 'Files.ReadWrite'
+        # .All (not just Files.ReadWrite) is required here because the upload target is jcarlos's
+        # OneDrive folder, not necessarily the signed-in person's own - .All covers writing to any
+        # file/folder the signed-in account has been granted access to via sharing, not just its own.
+        $scope    = 'Files.ReadWrite.All'
 
         $deviceResp = Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$tenant/oauth2/v2.0/devicecode" -Body @{ client_id = $clientId; scope = $scope } -ErrorAction Stop
 
@@ -464,7 +759,7 @@ if ($EmailForm) {
             Write-Status "Signed in - uploading form to OneDrive for emailing..." -Level Info
             # Uses the copy read into memory before the file was opened in Excel (see above) -
             # avoids "file in use" errors now that Excel has it open for you to view/print.
-            $uploadUrl = "https://graph.microsoft.com/v1.0/me/drive/root:/CustodyFormsToEmail/$([Uri]::EscapeDataString($newFileName)):/content"
+            $uploadUrl = "https://graph.microsoft.com/v1.0/drives/$targetDriveId/root:/CustodyFormsToEmail/$([Uri]::EscapeDataString($newFileName)):/content"
             Invoke-RestMethod -Method Put -Uri $uploadUrl -Headers @{ Authorization = "Bearer $token" } -Body $formBytesForEmail -ContentType 'application/octet-stream' -ErrorAction Stop | Out-Null
             Write-Status "Uploaded - the email will arrive at jcarlos@sherborneqatar.org within a few minutes (the free OneDrive trigger checks periodically, not instantly)." -Level Success
         }
@@ -477,6 +772,7 @@ if ($EmailForm) {
         Write-Status "Could not email the form automatically - it's still saved at: $newFormPath" -Level Warning
         Write-Log "[Error] Email upload failed: $detail"
         Open-LogOnError
+    }
     }
 }
 

@@ -52,14 +52,18 @@ That's it—the one-liner auto-downloads the script and Excel template, auto-ele
 
 ## Usage
 
-The script prompts for details after detecting hardware:
+First, a popup asks **"Is this a computer or laptop?"**
+- **Yes** - the tool detects hardware automatically (model, CPU, RAM, storage, etc.), same as before.
+- **No** - for items you can't run this tool on yourself (a projector, clicker, screen, etc.), typically filled out from your own computer. Hardware auto-detection is skipped, and the popup form below includes two extra boxes so you can type in the item's category and description by hand.
 
-```
-Location (e.g., Qatar, BH, UK): Qatar
-Department: IT
-Staff/Custodian name [USERNAME]: John Smith
-Asset Tag Number: AST-001234
-```
+Then a popup window asks for the remaining details:
+- **Location** - a dropdown, choose one of: Mall of Qatar, Bani Hajer, Boys School, Girls School
+- **Department** - type it in
+- **Custodian name** - type it in, or leave blank to use your own Windows username
+- **Asset Tag Number** - type it in
+- *(only if you chose "No" above)* **Item Category** and **Item Description** - type them in
+
+All of this gets written onto the form in CAPS automatically. The form won't let you continue until the required boxes are filled in.
 
 Output filename: `[Name] custody [Date].xlsx`
 - Via the one-liner: saved to your **Desktop** and opened automatically
@@ -130,11 +134,16 @@ The tool can automatically email the finished form as an attachment to `jcarlos@
    - Under **Show advanced options** → **Attachments**: Attachment Name → **File name** (dynamic content), Attachment Content → **File content** (dynamic content - no expression needed, OneDrive provides it directly)
 6. Save the flow.
 
-That's it - no URL to copy into the scripts. Once the flow is saved, every run of the tool (with emailing left on - the default) will prompt you once to sign in via a device code, then upload the finished form to that OneDrive folder, which triggers the flow and emails it automatically.
+That's it - no URL to copy into the scripts. Once the flow is saved, every run of the tool (with emailing left on - the default) will prompt whoever's running it to sign in via a device code, then upload the finished form to that OneDrive folder, which triggers the flow and emails it to jcarlos automatically.
 
 **The email isn't instant** - the free OneDrive trigger checks the folder periodically rather than reacting immediately, so it can take a few minutes for the email to arrive after the upload succeeds. That delay is normal, not a sign anything's broken.
 
-**Signing in:** the tool opens your browser to Microsoft's sign-in page and copies the code to your clipboard automatically - just paste it into the box on that page (Microsoft's device sign-in page does not support auto-filling the code; typing/pasting it in is a one-time Microsoft limitation, not something this tool can skip).
+**Signing in:** the tool opens the browser to Microsoft's sign-in page and copies the code to the clipboard automatically - just paste it into the box on that page (Microsoft's device sign-in page does not support auto-filling the code; typing/pasting it in is a one-time Microsoft limitation, not something this tool can skip).
+
+**Letting other staff run this tool (not just jcarlos):** uploads always target jcarlos's OneDrive folder specifically (via a hardcoded Drive ID in the script), regardless of which Microsoft 365 account signs in during the device-code step. This means:
+- Any staff member can run the tool on any computer, sign in with their **own** Microsoft 365 account, and it still lands in jcarlos's `CustodyFormsToEmail` folder and emails jcarlos - no per-person setup needed on their end.
+- For this to work, `CustodyFormsToEmail` must be shared with **"People in [organization] - Can edit"** access in OneDrive (not just specific named people) - do this once, in OneDrive's Share dialog for that folder.
+- If the folder's sharing is ever changed to something more restrictive, other staff's sign-ins will fail to upload (their own device-code sign-in still works, but the write to jcarlos's folder will be denied) - the tool will just skip emailing with a warning in that case, everything else still works normally.
 
 **To turn auto-email off**, either:
 - In `Run Custody Form.bat`: change `set "AUTO_EMAIL=1"` to `set "AUTO_EMAIL=0"`, or
@@ -176,6 +185,24 @@ Auto-configured:
 - Dynamic row heights
 
 ## Version History
+
+**v3.0** (2026-07-22) - Production-readiness pass
+- Fixed a real data-loss risk: two custody forms generated for the same person on the same day (e.g. two different assets, or a shared "Filled" folder) used to silently overwrite each other. The tool now automatically adds "(2)", "(3)", etc. to the filename so nothing is ever silently overwritten.
+- `CustodyForm.log` no longer grows forever - it's automatically trimmed once it passes ~2MB, keeping the most recent history instead of accumulating indefinitely.
+- Added a quick internet-connectivity check before attempting to email the form - on a computer with no internet (common right after imaging, before it's joined to Wi-Fi), the tool now skips straight to a clear "no internet, skipping email" message instead of waiting through a slower timeout.
+- Fixed a bug where requesting admin elevation (on a locked-down account) would silently drop the `-EmailForm` request - a run started with auto-email on now keeps that setting through an elevation prompt instead of finishing without emailing.
+
+**v2.9** (2026-07-22)
+- Smarter model name detection now works well across brands, not just Lenovo - Dell, HP, Microsoft Surface, ASUS, Acer, and others now show a clean "Brand Model" name (e.g. "Dell Latitude 5420", "HP EliteBook 840 G8") instead of a raw/duplicated string, with brand names normalized to how they're commonly known (e.g. "Dell Inc." -> "Dell", "ASUSTeK COMPUTER INC." -> "ASUS"). Generic/white-box machines that don't report a real model now show an honest "model not reported by this device" instead of placeholder junk like "System Product Name."
+- Fixed the custody form template's title banner ("CUSTODY/TRACKING FORM...") sometimes looking cramped when previewed inside OneDrive's browser view (the downloaded/emailed file itself was always fine - this was purely a web-preview rendering quirk, now resolved with a small header row height adjustment).
+
+**v2.8** (2026-07-22)
+- Added an "Is this a computer or laptop?" popup that appears first. Choosing "Yes" works exactly as before (auto-detects everything). Choosing "No" skips hardware auto-detection and lets you type in the item's category and description by hand - for things like projectors, clickers, or screens that you're custodying from your own computer rather than running the tool on directly.
+- Smarter model name detection for Lenovo devices - now shows a clean, human-readable model name (e.g. "Model: Lenovo ThinkPad E14 Gen 7 (21SX001TGR)") instead of the raw internal SKU code, while still keeping the exact model number for asset records.
+- Replaced the typed console prompts with a proper popup window. Location is now a dropdown limited to the four valid options (Mall of Qatar, Bani Hajer, Boys School, Girls School) so it can't be mistyped; the form won't close until all required fields are filled in.
+
+**v2.7** (2026-07-22)
+- Emailing now works no matter which staff member's account signs in - uploads always target jcarlos's OneDrive folder specifically (a hardcoded Drive ID), instead of whoever-signed-in's own OneDrive. Requires the CustodyFormsToEmail folder to be shared org-wide with edit access (see Email Automation above).
 
 **v2.6** (2026-07-22)
 - Fixed a real bug: emailing could fail with "file in use" because the form was already open in Excel by the time the upload tried to read it. The form's contents are now read into memory before it's opened in Excel, so emailing no longer depends on the file being closed.
