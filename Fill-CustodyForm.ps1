@@ -28,7 +28,7 @@
 
 .NOTES
     Author: Sherborne Custody Tool Team
-    Version: 3.7
+    Version: 3.9
     Requires: Windows 10/11, PowerShell 5.1+
     LastModified: 2026-07-23
     Dependencies: None (zero external dependencies)
@@ -1130,26 +1130,48 @@ if ($EmailForm) {
 
             # Clean up the OneDrive copy's filename after the flow has almost certainly already
             # picked it up, so the file sitting in OneDrive long-term reads as a normal clean name
-            # instead of keeping the "[CC ...]"/"[ITN]" tag forever. This waits much longer than the
-            # earlier (reverted) 5-second version, which raced the trigger and sometimes lost the CC
-            # silently. NOTE: this is a fixed delay, not a guarantee - the free/shared-tier OneDrive
-            # trigger's polling interval isn't fixed, controllable, or exposed to this script, so on
-            # a slow poll cycle it's still theoretically possible (though unlikely at this delay) for
-            # the rename to happen before the trigger reads the file, which would lose the CC/ITN
-            # tag the same way the old 5-second version did. This tradeoff was discussed and accepted
-            # rather than building a slower/heavier "confirm the flow actually ran first" check.
-            $renameDelaySeconds = 90
+            # instead of keeping the "[CC ...]"/"[ITN]" tag forever.
+            #
+            # v3.9: bumped from 90s to 8 minutes AND moved to a separate detached process, after
+            # confirming live (via Power Automate run history) that the free/shared-tier OneDrive
+            # trigger was regularly taking 1-5+ minutes to fire - well past the old 90-second
+            # delay - which meant the rename was consistently winning the race and silently wiping
+            # the "[CC ...]" tag before the trigger ever read it (CC came back blank on every
+            # recent run). 8 minutes is comfortably past every delay observed so far, but this is
+            # still a fixed guess, not a guarantee - an unusually slow poll cycle could theoretically
+            # still lose the race. Running this in a separate process (Start-Process, not Start-Job)
+            # means it survives even if this console window is closed right after upload - the
+            # rename happens invisibly a few minutes later instead of blocking you from closing the
+            # tool. NOTE: the access token is passed as a command-line argument to that process, so
+            # it's briefly visible to anything with admin/Task Manager access on this computer for
+            # the few minutes the background process runs - acceptable since the token is short-lived
+            # (~1 hour) and scoped to the signed-in user's own account.
+            $renameDelaySeconds = 480
             try {
-                Write-Status "Will tidy up the OneDrive filename in $renameDelaySeconds seconds (once the email flow has had time to pick it up)..." -Level Info
-                Start-Sleep -Seconds $renameDelaySeconds
+                Write-Status "The OneDrive filename will be tidied up in the background in a few minutes (no need to wait - you can close this window now)." -Level Info
                 $renameUrl = "https://graph.microsoft.com/v1.0/drives/$targetDriveId/root:/$uploadPath"
-                $renameBody = @{ name = $newFileName } | ConvertTo-Json
-                Invoke-RestMethod -Method Patch -Uri $renameUrl -Headers @{ Authorization = "Bearer $token"; 'Content-Type' = 'application/json' } -Body $renameBody -ErrorAction Stop | Out-Null
-                Write-Log "[Info] Renamed OneDrive copy back to clean filename: $newFileName"
+                $renameHelper = @"
+param([string]`$DelaySeconds, [string]`$RenameUrl, [string]`$CleanName, [string]`$Token, [string]`$LogPath)
+Start-Sleep -Seconds ([int]`$DelaySeconds)
+try {
+    `$body = @{ name = `$CleanName } | ConvertTo-Json
+    Invoke-RestMethod -Method Patch -Uri `$RenameUrl -Headers @{ Authorization = "Bearer `$Token"; 'Content-Type' = 'application/json' } -Body `$body -ErrorAction Stop | Out-Null
+    Add-Content -LiteralPath `$LogPath -Value "`$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [Info] Renamed OneDrive copy back to clean filename (background): `$CleanName"
+} catch {
+    Add-Content -LiteralPath `$LogPath -Value "`$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [Warning] Could not tidy up the OneDrive filename afterward (background): `$(`$_.Exception.Message)"
+}
+"@
+                $helperPath = Join-Path $env:TEMP "CustodyRename_$(Get-Random).ps1"
+                Set-Content -LiteralPath $helperPath -Value $renameHelper -Encoding UTF8
+                Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
+                    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$helperPath`"",
+                    "`"$renameDelaySeconds`"", "`"$renameUrl`"", "`"$newFileName`"", "`"$token`"", "`"$script:LogPath`""
+                ) | Out-Null
+                Write-Log "[Info] Launched background rename (will fire in $renameDelaySeconds seconds)."
             } catch {
                 # Non-fatal - the email has already gone out either way by this point. Worst case the
                 # OneDrive copy keeps its tagged name, which is harmless, just less tidy.
-                Write-Log "[Warning] Could not tidy up the OneDrive filename afterward: $($_.Exception.Message)"
+                Write-Log "[Warning] Could not launch background rename: $($_.Exception.Message)"
             }
         }
     } catch {
